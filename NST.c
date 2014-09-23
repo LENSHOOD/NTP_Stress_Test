@@ -2,7 +2,7 @@
 NTP Stress Test
 	Send plenty of NTP requests to test how many responses the server
 	can produce.
-date: 2014/9/22 Version 1.0
+date: 2014/9/24 Version 1.1
 **********************************************************************/
 #include <stdio.h>
 #include <stdint.h>
@@ -32,9 +32,6 @@ date: 2014/9/22 Version 1.0
 #define JAN_1970 0x83aa7e80
 #define NTPFRAC(x) (4294*(x)+((1981*(x))>>11))
 #define USEC(x) (((x)>>12-759*((((X)>>10)+32768)>>16))
-
-//the maximum request number
-#define MAX_NUM 2
 
 //NTP 64bit format
 struct ntptime
@@ -82,6 +79,7 @@ struct parathread
 	int32_t size;
 	int32_t client_fd;
 	struct sockaddr_in server_sockaddr;
+	uint32_t *count;
 };
 
 //This function build a entire NTP client packet
@@ -91,13 +89,13 @@ struct sockpack Init_Soacket(int para, char *str[]);
 //Send the initial packet
 void Send_NTP_Packet(uint8_t *data, int32_t size, int32_t client_fd, struct sockaddr_in server_sockaddr);
 //Receive the data that server returned
-void Receive_NTP_Packet(uint8_t *data, int32_t *size, int32_t client_fd, struct sockaddr_in server_sockaddr);
+void Receive_NTP_Packet(uint8_t *data, int32_t *size, int32_t client_fd, struct sockaddr_in server_sockaddr, uint32_t *count);
 //Thread handler
 void *Get_thread(struct parathread *para);
 
 int main(int argc, char *argv[])
 {
-	uint32_t i,err;
+	uint32_t i,err,count=0,max_count;
 	//NTP standard packet
 	struct ntppacket *send_packet,*recv_packet;
 	//use to passing parameters
@@ -108,7 +106,19 @@ int main(int argc, char *argv[])
 	//use to passing parameters
 	struct parathread pass_para;
 	//thread array
-	pthread_t udp_thread[MAX_NUM];
+	pthread_t *udp_thread = (pthread_t*)malloc(sizeof(pthread_t));
+
+	//display information
+	if(argc != 3)
+	{
+		printf("usage: NTP_Stress_Test [IP Address] [Maximum Connect Numbers]\n");
+		exit(0);
+	}
+
+	//string to number
+	max_count = (uint32_t)(*argv[2] - 0x30);
+	printf("%d\n",max_count);
+	memset(udp_thread,0,(size_t)max_count);
 
 	send_packet = (struct ntppacket *)malloc(sizeof(struct ntppacket));
 	//remove comment if need to use "rcvpacket"
@@ -127,9 +137,10 @@ int main(int argc, char *argv[])
 	pass_para.client_fd = send_pack.fd;
 	pass_para.size = sin_size;
 	pass_para.server_sockaddr = send_pack.s_sockaddr;
+	pass_para.count = &count;
 
 	//create threads
-	for(i=0;i<MAX_NUM;i++)
+	for(i=0;i< max_count;i++)
 	{
 		if((err = pthread_create(udp_thread+i,NULL,(void*)Get_thread,&pass_para)) != 0)
 		{
@@ -138,7 +149,7 @@ int main(int argc, char *argv[])
 		}
 	}
 	//wait thread to end
-	for(i=0;i<MAX_NUM;i++)
+	for(i=0;i<max_count;i++)
 	{
 		pthread_join(udp_thread[i],NULL);
 	}
@@ -195,7 +206,7 @@ struct sockpack Init_Soacket(int para, char *str[])
 	memset(&server_sockaddr,0,sizeof(struct sockaddr_in));
 
 	//obtain host name/IP from argv
-	if(para != 2)
+	if(para != 3)
 	{
 		printf("Please input your host name/IP address as a parameter!\n");
 		exit(1);
@@ -240,7 +251,7 @@ void Send_NTP_Packet(uint8_t *data, int32_t size, int32_t client_fd, struct sock
 		printf("Send Packet successful!\n");
 }
 
-void Receive_NTP_Packet(uint8_t *data, int32_t *size, int32_t client_fd, struct sockaddr_in server_sockaddr)
+void Receive_NTP_Packet(uint8_t *data, int32_t *size, int32_t client_fd, struct sockaddr_in server_sockaddr, uint32_t *count)
 {
 	struct sockaddr_in client_sockaddr;
 	if((recvfrom(client_fd,data,NTP_LEN*8,0,(struct sockaddr*)&client_sockaddr,size) == -1))
@@ -254,7 +265,9 @@ void Receive_NTP_Packet(uint8_t *data, int32_t *size, int32_t client_fd, struct 
 			int32_t temp;
 			memcpy(&temp,data,4);
 			fprintf(stdout,"LI_VN_MODE_strtum_poll_precision:%x\n",ntohl(temp));
-			memcpy(&temp,data+4,4);
+			(*count)++;
+			printf("responded connections: %d\n",*count);
+			/*memcpy(&temp,data+4,4);
 			fprintf(stdout,"root_delay:%x\n",ntohl(temp));
 			memcpy(&temp,data+8,4);
 			fprintf(stdout,"root_dispersion:%x\n",ntohl(temp));
@@ -275,14 +288,32 @@ void Receive_NTP_Packet(uint8_t *data, int32_t *size, int32_t client_fd, struct 
 			memcpy(&temp,data+40,4);
 			fprintf(stdout,"receive_timestamp_coarse:%x\n",ntohl(temp));
 			memcpy(&temp,data+44,4);
-			fprintf(stdout,"receive_timestamp_fine:%x\n",ntohl(temp));
+			fprintf(stdout,"receive_timestamp_fine:%x\n",ntohl(temp));*/
 		}
 }
 
 void *Get_thread(struct parathread *para)
 {
+	//in case of server timeout, set time limit
+	fd_set recv_ready;
+	struct timeval block_time;
+	FD_ZERO(&recv_ready);
+	FD_SET(para->client_fd, &recv_ready);
+	block_time.tv_sec = 10;
+	block_time.tv_usec = 0;
+
+	//send initial packet
 	Send_NTP_Packet(para->send_data,para->size,para->client_fd,para->server_sockaddr);
-	//Receive_NTP_Packet(para->rcvdata,para->size,para->clientfd,para->server_sockaddr);
+	//receive data or timeout and exit
+	if(select((para->client_fd)+1,&recv_ready,NULL,NULL,&block_time) > 0)
+	{
+		Receive_NTP_Packet(para->recv_data,&(para->size),para->client_fd,para->server_sockaddr,para->count);
+	}
+	else
+	{
+		printf("Server not response!\n");
+	}
+
 	pthread_exit((void*)0);
 	return((void*)0);
 }
