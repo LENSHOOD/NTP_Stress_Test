@@ -2,7 +2,7 @@
 NTP Stress Test
 	Send plenty of NTP requests to test how many responses the server
 	can produce.
-date: 2014/9/24 Version 1.1
+date: 2014/9/24 Version 1.1.1
 **********************************************************************/
 #include <stdio.h>
 #include <stdint.h>
@@ -116,8 +116,8 @@ int main(int argc, char *argv[])
 	}
 
 	//string to number
-	max_count = (uint32_t)(*argv[2] - 0x30);
-	printf("%d\n",max_count);
+	//max_count = (uint32_t)(*argv[2] - 0x30);
+	max_count = atoi(argv[2]);
 	memset(udp_thread,0,(size_t)max_count);
 
 	send_packet = (struct ntppacket *)malloc(sizeof(struct ntppacket));
@@ -140,13 +140,16 @@ int main(int argc, char *argv[])
 	pass_para.count = &count;
 
 	//create threads
-	for(i=0;i< max_count;i++)
+	for(i=0;i<max_count;i++)
 	{
 		if((err = pthread_create(udp_thread+i,NULL,(void*)Get_thread,&pass_para)) != 0)
 		{
 				fprintf(stderr,"An Error Occurred:%s, Send Failed!\n",strerror(errno));
 				exit(1);
 		}
+		//pthread_join(udp_thread[i],NULL);
+		//pthread_detach(udp_thread[i]);
+		//usleep(1000);
 	}
 	//wait thread to end
 	for(i=0;i<max_count;i++)
@@ -155,6 +158,7 @@ int main(int argc, char *argv[])
 	}
 	//close
 	close(send_pack.fd);
+	printf("Maximum Valid Connections:%d\n ",count);
 	exit(0);
 }
 
@@ -267,28 +271,6 @@ void Receive_NTP_Packet(uint8_t *data, int32_t *size, int32_t client_fd, struct 
 			fprintf(stdout,"LI_VN_MODE_strtum_poll_precision:%x\n",ntohl(temp));
 			(*count)++;
 			printf("responded connections: %d\n",*count);
-			/*memcpy(&temp,data+4,4);
-			fprintf(stdout,"root_delay:%x\n",ntohl(temp));
-			memcpy(&temp,data+8,4);
-			fprintf(stdout,"root_dispersion:%x\n",ntohl(temp));
-			memcpy(&temp,data+12,4);
-			fprintf(stdout,"reference_identifier:%x\n",ntohl(temp));
-			memcpy(&temp,data+16,4);
-			fprintf(stdout,"reference_timestamp_coarse:%x\n",ntohl(temp));
-			memcpy(&temp,data+20,4);
-			fprintf(stdout,"reference_timestamp_fine:%x\n",ntohl(temp));
-			memcpy(&temp,data+24,4);
-			fprintf(stdout,"originage_timestamp_coarse:%x\n",ntohl(temp));
-			memcpy(&temp,data+28,4);
-			fprintf(stdout,"originage_timestamp_fine:%x\n",ntohl(temp));
-			memcpy(&temp,data+32,4);
-			fprintf(stdout,"receive_timestamp_coarse:%x\n",ntohl(temp));
-			memcpy(&temp,data+36,4);
-			fprintf(stdout,"receive_timestamp_fine:%x\n",ntohl(temp));
-			memcpy(&temp,data+40,4);
-			fprintf(stdout,"receive_timestamp_coarse:%x\n",ntohl(temp));
-			memcpy(&temp,data+44,4);
-			fprintf(stdout,"receive_timestamp_fine:%x\n",ntohl(temp));*/
 		}
 }
 
@@ -299,7 +281,7 @@ void *Get_thread(struct parathread *para)
 	struct timeval block_time;
 	FD_ZERO(&recv_ready);
 	FD_SET(para->client_fd, &recv_ready);
-	block_time.tv_sec = 10;
+	block_time.tv_sec = 2;
 	block_time.tv_usec = 0;
 
 	//send initial packet
@@ -313,7 +295,6 @@ void *Get_thread(struct parathread *para)
 	{
 		printf("Server not response!\n");
 	}
-
 	pthread_exit((void*)0);
 	return((void*)0);
 }
